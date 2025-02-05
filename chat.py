@@ -1,25 +1,23 @@
 import streamlit as st
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from PIL import Image
-import pytesseract
-import os
 import requests
+import os
+import pytesseract
+import PyPDF2
+import pyttsx3
+from io import BytesIO
+from PIL import Image
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY") or "00XplKyfg6UcGfNZqqFbQ8WwOzOGBAj6"
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+MODEL_NAME = "mistral-medium"
 
-# OpenAI LLM
-llm = ChatOpenAI(model="gpt-3.5-turbo")
-
-# OCR Function to Extract Text from Image
+# Function to Extract Text from Image
 def extract_text_from_image(image):
-    text = pytesseract.image_to_string(image)
-    return text.strip()
+    return pytesseract.image_to_string(image).strip()
 
 # Function to Extract Text from URL
 def extract_text_from_url(url):
@@ -30,34 +28,40 @@ def extract_text_from_url(url):
     except Exception as e:
         return f"Error extracting data from URL: {str(e)}"
 
-# Define Prompt Template
-prompt_template = PromptTemplate(
-    input_variables=["profile", "message", "mode"],
-    template="""
-    You are a friendly and engaging AI designed to help users write dating messages.
+# Function to Extract Text from PDF
+def extract_text_from_pdf(pdf_file):
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+    text = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+    return text.strip()
 
+# Function to Generate AI Response
+def generate_ai_response(profile, message, mode, tone):
+    prompt_template = """
+    You are a {tone} AI designed to help users write dating messages.
+    
     {mode}: {profile}
     {message}
-
-    Generate a warm, friendly, and engaging response with 4-5 sentences summarizing the profile and up to 5 thoughtful questions.
+    
+    Generate a response with 4-5 sentences summarizing the profile and up to 5 thoughtful questions.
     """
-)
+    prompt = prompt_template.format(profile=profile, message=message, mode=mode, tone=tone)
+    headers = {"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": MODEL_NAME, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
+    
+    try:
+        response = requests.post(MISTRAL_API_URL, headers=headers, json=payload)
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"Error generating response: {str(e)}"
 
-# Create LLM Chain
-chain = LLMChain(llm=llm, prompt=prompt_template)
+# Function to Convert Text to Speech
+def text_to_speech(text):
+    engine = pyttsx3.init()
+    engine.say(text)
+    engine.runAndWait()
 
-# Streamlit UI with Enhanced Design
+# Streamlit UI Setup
 st.set_page_config(page_title="💖 Dating Chatbot", layout="wide")
-st.markdown("""
-    <style>
-        .main { background-color: #f7f7f7; }
-        .stTextInput, .stTextArea, .stFileUploader, .stButton > button {
-            border-radius: 10px; padding: 10px;
-        }
-        .stRadio { padding-bottom: 20px; }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("💖 Dating Chatbot")
 st.write("Create personalized and engaging dating messages with AI!")
 
@@ -70,20 +74,24 @@ option = st.radio("Select Mode:", [
     "Chatbot Help"
 ])
 
-# Upload Profile Image, Text File, or URL
-uploaded_profile = st.file_uploader("Upload Profile Image or Text File", type=["png", "jpg", "jpeg", "txt"])
+# Select Tone
+tone = st.selectbox("Select Message Tone:", ["Friendly 😊", "Professional 👔", "Funny 😆"])
+
+# Upload Profile (Image, PDF, or Text File)
+uploaded_profile = st.file_uploader("Upload Profile (Image, PDF, or Text File)", type=["png", "jpg", "jpeg", "txt", "pdf"])
 profile_url = st.text_input("Or enter a profile URL:")
 
 user_message = ""
-if option == "Followup Reply Message" or option == "Chatbot Help":
+if option in ["Followup Reply Message", "Chatbot Help"]:
     user_message = st.text_area("Enter your message:")
 
 # Generate Response Button
 if st.button("Generate Response"):
     profile_text = ""
-
     if uploaded_profile:
-        if uploaded_profile.type.startswith("image"):
+        if uploaded_profile.type.endswith("pdf"):
+            profile_text = extract_text_from_pdf(uploaded_profile)
+        elif uploaded_profile.type.startswith("image"):
             profile_text = extract_text_from_image(Image.open(uploaded_profile))
         else:
             profile_text = uploaded_profile.getvalue().decode("utf-8")
@@ -91,18 +99,15 @@ if st.button("Generate Response"):
         profile_text = extract_text_from_url(profile_url)
 
     if profile_text or user_message:
-        if option == "Chatbot Help":
-            response = chain.run(profile="Dating advice chatbot", message=user_message, mode="Help")
-        elif option == "Profile Analysis":
-            response = chain.run(profile=f"Analyze this profile and suggest improvements: {profile_text}", message="", mode=option)
-        elif option == "Conversation Starters":
-            response = chain.run(profile=f"Generate creative conversation starters for this profile: {profile_text}", message="", mode=option)
-        else:
-            response = chain.run(profile=profile_text, message=user_message, mode=option)
-
-        # Display Generated Response
+        response = generate_ai_response(profile_text, user_message, option, tone)
         st.subheader("💌 AI Generated Response:")
         st.write(response)
+        
+        # Copy Button
+        st.button("📋 Copy Response", on_click=lambda: st.session_state.update({"clipboard": response}))
+        
+        # Voice Output
+        if st.button("🔊 Hear Response"):
+            text_to_speech(response)
     else:
         st.warning("⚠ Please upload a profile, enter a URL, or provide a message.")
-
