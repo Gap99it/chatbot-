@@ -1,20 +1,43 @@
 import streamlit as st
-from langchain_community.llms import HuggingFacePipeline
+import requests
+import os
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from PIL import Image
 import pytesseract
-import os
-import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-MISTRAL_API_KEY = "b49091a6f805af4f67b99f54f78266d0f500d5a191a96568de170ad6238287c0"
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
-# Use Mistral AI API instead of OpenAI
-llm = HuggingFacePipeline.from_model_id("mistralai/Mistral-7B-Instruct-v0.1", task="text-generation")
+# Function to call Mistral AI API
+def generate_response(profile, message, mode):
+    url = "https://api.mistral.ai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    prompt = f"""
+    You are a friendly and engaging AI designed to help users write dating messages.
+
+    {mode}: {profile}
+    {message}
+
+    Generate a warm, friendly, and engaging response with 4-5 sentences summarizing the profile and up to 5 thoughtful questions.
+    """
+    data = {
+        "model": "mistral-medium",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7
+    }
+    
+    response = requests.post(url, headers=headers, json=data)
+    
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        return f"Error: {response.status_code} - {response.text}"
 
 # OCR Function to Extract Text from Image
 def extract_text_from_image(image):
@@ -30,33 +53,8 @@ def extract_text_from_url(url):
     except Exception as e:
         return f"Error extracting data from URL: {str(e)}"
 
-# Define Prompt Template
-prompt_template = PromptTemplate(
-    input_variables=["profile", "message", "mode"],
-    template="""
-    You are a friendly and engaging AI designed to help users write dating messages.
-
-    {mode}: {profile}
-    {message}
-
-    Generate a warm, friendly, and engaging response with 4-5 sentences summarizing the profile and up to 5 thoughtful questions.
-    """
-)
-
-# Create LLM Chain
-chain = LLMChain(llm=llm, prompt=prompt_template)
-
-# Streamlit UI with Enhanced Design
+# Streamlit UI
 st.set_page_config(page_title="💖 Dating Chatbot", layout="wide")
-st.markdown("""
-    <style>     
-        .main { background-color: #f7f7f7; }
-        .stTextInput, .stTextArea, .stFileUploader, .stButton > button {
-            border-radius: 10px; padding: 10px;
-        }
-        .stRadio { padding-bottom: 20px; }
-    </style>
-""", unsafe_allow_html=True)
 
 st.title("💖 Dating Chatbot")
 st.write("Create personalized and engaging dating messages with AI!")
@@ -91,16 +89,7 @@ if st.button("Generate Response"):
         profile_text = extract_text_from_url(profile_url)
 
     if profile_text or user_message:
-        if option == "Chatbot Help":
-            response = chain.run(profile="Dating advice chatbot", message=user_message, mode="Help")
-        elif option == "Profile Analysis":
-            response = chain.run(profile=f"Analyze this profile and suggest improvements: {profile_text}", message="", mode=option)
-        elif option == "Conversation Starters":
-            response = chain.run(profile=f"Generate creative conversation starters for this profile: {profile_text}", message="", mode=option)
-        else:
-            response = chain.run(profile=profile_text, message=user_message, mode=option)
-
-        # Display Generated Response
+        response = generate_response(profile_text, user_message, option)
         st.subheader("💌 AI Generated Response:")
         st.write(response)
     else:

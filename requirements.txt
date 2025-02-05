@@ -2,8 +2,8 @@ langchain_openai
 langchain_core
 python-dotenv
 streamlit
-langchain_community 
+langchain_community
 langserve
-eautifulSoup
+beautifulsoup4
 pytesseract
-ChatOpenAI
+openai
